@@ -971,6 +971,149 @@ export function searchRecordsByCompanyName(
   );
 }
 
+export interface SanitizedAuthInput {
+  sanitized: string;
+  isSuspicious: boolean;
+  reason?: string;
+}
+
+/**
+ * Sanitizes authentication input and detects XSS / SQL / command injection attempts
+ */
+export function sanitizeAuthInput(raw: string): SanitizedAuthInput {
+  const str = String(raw || '');
+  const suspiciousPattern =
+    /(<script|javascript:|onerror=|onload=|--|;|\bOR\s+1\s*=\s*1\b|\bDROP\s+TABLE\b|\bUNION\s+SELECT\b|[<>'"`])/i;
+  const isSuspicious = suspiciousPattern.test(str);
+  const sanitized = str
+    .replace(/[<>"'`;]/g, '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .trim();
+
+  return {
+    sanitized,
+    isSuspicious,
+    reason: isSuspicious
+      ? 'Terdeteksi karakter atau pola injeksi berbahaya pada input kredensial.'
+      : undefined,
+  };
+}
+
+export interface LoginRateLimitState {
+  isLocked: boolean;
+  remainingSeconds: number;
+  remainingAttempts: number;
+}
+
+/**
+ * Evaluates current brute-force rate limit status
+ */
+export function evaluateLoginRateLimit(
+  failedAttempts: number,
+  lockUntilMs: number,
+  nowMs: number,
+  maxAttempts: number = 5
+): LoginRateLimitState {
+  if (lockUntilMs > nowMs) {
+    const remainingSeconds = Math.max(1, Math.ceil((lockUntilMs - nowMs) / 1000));
+    return {
+      isLocked: true,
+      remainingSeconds,
+      remainingAttempts: 0,
+    };
+  }
+  const safeAttempts = Math.max(0, failedAttempts);
+  const remainingAttempts = Math.max(0, maxAttempts - (safeAttempts % maxAttempts));
+  return {
+    isLocked: false,
+    remainingSeconds: 0,
+    remainingAttempts,
+  };
+}
+
+/**
+ * Computes next brute-force lockout state after a failed login attempt
+ */
+export function computeNextLockoutState(
+  currentAttempts: number,
+  nowMs: number,
+  maxAttempts: number = 5,
+  baseLockDurationMs: number = 60000
+): { failedAttempts: number; lockUntilMs: number; isLocked: boolean } {
+  const nextAttempts = Math.max(0, currentAttempts) + 1;
+  if (nextAttempts >= maxAttempts && nextAttempts % maxAttempts === 0) {
+    const multiplier = Math.floor(nextAttempts / maxAttempts);
+    const lockUntilMs = nowMs + baseLockDurationMs * multiplier;
+    return {
+      failedAttempts: nextAttempts,
+      lockUntilMs,
+      isLocked: true,
+    };
+  }
+  return {
+    failedAttempts: nextAttempts,
+    lockUntilMs: 0,
+    isLocked: false,
+  };
+}
+
+export interface SignedSessionEnvelope {
+  user: GASUserAccount;
+  issuedAt: number;
+  expiresAt: number;
+  signature: string;
+}
+
+const SESSION_SECRET_SALT = 'AR_TRACKER_PRO_ENTERPRISE_GUARD_V2_9941';
+
+/**
+ * Creates a cryptographically signed session envelope with TTL expiration
+ */
+export function createSignedSessionEnvelope(
+  user: GASUserAccount,
+  nowMs: number = Date.now(),
+  ttlMs: number = 8 * 60 * 60 * 1000
+): SignedSessionEnvelope {
+  const { password: _, ...safeUser } = user;
+  const expiresAt = nowMs + ttlMs;
+  const payload = `${safeUser.username}|${safeUser.role}|${safeUser.branch}|${ nowMs }|${expiresAt}|${SESSION_SECRET_SALT}`;
+  const signature = generateAuditHash(payload);
+  return {
+    user: safeUser,
+    issuedAt: nowMs,
+    expiresAt,
+    signature,
+  };
+}
+
+/**
+ * Verifies a signed session envelope from sessionStorage against tampering and expiration
+ */
+export function verifySignedSessionEnvelope(
+  rawJson: string | null,
+  nowMs: number = Date.now()
+): GASUserAccount | null {
+  if (!rawJson) return null;
+  try {
+    const parsed = JSON.parse(rawJson) as Partial<SignedSessionEnvelope> & Partial<GASUserAccount>;
+    if (parsed && parsed.user && typeof parsed.signature === 'string' && typeof parsed.expiresAt === 'number' && typeof parsed.issuedAt === 'number') {
+      if (nowMs > parsed.expiresAt) {
+        return null;
+      }
+      const u = parsed.user;
+      const expectedPayload = `${u.username}|${u.role}|${u.branch}|${parsed.issuedAt}|${parsed.expiresAt}|${SESSION_SECRET_SALT}`;
+      const expectedSig = generateAuditHash(expectedPayload);
+      if (expectedSig !== parsed.signature) {
+        return null;
+      }
+      return u;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Authenticates a user against the Google Apps Script (GAS) user table
  */
@@ -979,7 +1122,17 @@ export function authenticateGASUser(
   usernameInput: string,
   passwordInput: string
 ): { success: boolean; user?: GASUserAccount; error?: string } {
-  const cleanUser = (usernameInput || '').trim().toLowerCase();
+  const userCheck = sanitizeAuthInput(usernameInput);
+  const passCheck = sanitizeAuthInput(passwordInput);
+
+  if (userCheck.isSuspicious || passCheck.isSuspicious) {
+    return {
+      success: false,
+      error: 'Sistem Keamanan: Input ditolak karena mengandung karakter tidak diizinkan.',
+    };
+  }
+
+  const cleanUser = userCheck.sanitized.toLowerCase();
   const cleanPass = (passwordInput || '').trim();
 
   if (!cleanUser || !cleanPass) {

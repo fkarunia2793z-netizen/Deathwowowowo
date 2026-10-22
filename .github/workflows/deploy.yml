@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -40,6 +40,16 @@ jobs:
         with:
           path: ./dist
 
-      - name: Deploy to GitHub Pages
+      # Metode 1: GitHub Actions Native Deployment (Bila Source di Settings > Pages adalah 'GitHub Actions')
+      - name: Deploy to GitHub Pages (GitHub Actions Source)
         id: deployment
         uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      # Metode 2: Fallback ke branch gh-pages otomatis jika Source di repositori masih default ('Deploy from a branch')
+      - name: Fallback Deploy to gh-pages branch
+        if: steps.deployment.outcome != 'success'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist

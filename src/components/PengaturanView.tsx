@@ -143,13 +143,17 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "master"]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
   build-and-deploy:
@@ -160,22 +164,36 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
       - name: Install dependencies & Build Vite SPA
         run: |
           npm install --legacy-peer-deps
           npm install react-is --legacy-peer-deps
           npm run build
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
-      - name: Deploy to GitHub Pages
+
+      # Metode 1: GitHub Actions Native Deployment (Bila Source di Settings > Pages adalah 'GitHub Actions')
+      - name: Deploy to GitHub Pages (GitHub Actions Source)
         id: deployment
-        uses: actions/deploy-pages@v4`;
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      # Metode 2: Fallback ke branch gh-pages jika Source di repositori masih default ('Deploy from a branch')
+      - name: Fallback Deploy to gh-pages branch
+        if: steps.deployment.outcome != 'success'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: \${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist`;
 
   return (
     <div className="flex flex-col w-full p-6 gap-6">
@@ -1297,6 +1315,64 @@ jobs:
             <pre className="p-4 bg-surface-input border border-border-grid font-code-audit text-text-bright overflow-x-auto max-h-[420px] leading-relaxed">
               <code>{COMPLETE_GAS_CODE_TEMPLATE}</code>
             </pre>
+          </div>
+
+          {/* Solusi Error 404 GitHub Pages Troubleshooting Box */}
+          <div className="xl:col-span-12 bg-amber-950/30 border-2 border-amber-500/60 p-5 flex flex-col md:flex-row items-start gap-4">
+            <div className="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-500 flex items-center justify-center shrink-0 text-amber-400">
+              <span className="material-symbols-outlined text-[24px]">
+                warning
+              </span>
+            </div>
+            <div className="flex-1 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="font-headline-sm text-amber-300 font-bold">
+                  Solusi Error: HttpError 404 &quot;Failed to create deployment / Ensure GitHub Pages has been enabled&quot;
+                </h3>
+                <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 font-code-audit text-xs uppercase">
+                  Penyebab &amp; Solusi Cepat (1 Menit)
+                </span>
+              </div>
+              <p className="font-body-sm text-text-bright">
+                Error ini terjadi karena repositori GitHub baru secara default belum mengizinkan workflow GitHub Actions mempublikasikan Pages. Ikuti 3 langkah berikut untuk langsung menyelesaikannya:
+              </p>
+              <ol className="list-decimal list-inside space-y-1.5 font-body-sm text-text-dim mt-1">
+                <li>
+                  Buka pengaturan Pages repositori Anda:{' '}
+                  <a
+                    href="https://github.com/fkarunia2793z-netizen/Deathwowowowo/settings/pages"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-secondary underline font-code-audit hover:text-text-bright inline-flex items-center gap-1"
+                  >
+                    <span>github.com/.../Deathwowowowo/settings/pages</span>
+                    <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+                  </a>
+                </li>
+                <li>
+                  Di bawah judul <strong className="text-text-bright">&quot;Build and deployment&quot;</strong>, cari menu <strong className="text-text-bright">&quot;Source&quot;</strong>.
+                </li>
+                <li>
+                  Ubah dari <code className="text-error bg-surface-input px-1.5 py-0.5 border border-border-grid">Deploy from a branch</code> menjadi <code className="text-status-settled bg-surface-input px-1.5 py-0.5 border border-border-grid font-bold">GitHub Actions</code>.
+                </li>
+                <li>
+                  Kembali ke tab <strong className="text-text-bright">Actions</strong> di GitHub, buka run yang gagal (<code className="text-tertiary">build-and-deploy</code>), lalu klik tombol <strong className="text-text-bright">&quot;Re-run all jobs&quot;</strong>.
+                </li>
+              </ol>
+              <div className="mt-2 pt-2 border-t border-amber-500/30 flex flex-wrap items-center gap-3">
+                <span className="font-code-audit text-xs text-amber-300">
+                  Setelah aktif, web app Anda dapat diakses di:
+                </span>
+                <a
+                  href="https://fkarunia2793z-netizen.github.io/Deathwowowowo/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-code-audit text-xs text-status-settled hover:underline font-bold"
+                >
+                  https://fkarunia2793z-netizen.github.io/Deathwowowowo/
+                </a>
+              </div>
+            </div>
           </div>
 
           <div className="xl:col-span-6 bg-surface-card border border-border-grid p-6 flex flex-col gap-4">

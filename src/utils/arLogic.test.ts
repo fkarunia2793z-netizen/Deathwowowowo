@@ -25,6 +25,11 @@ import {
   formatPeriodLabel,
   getSixMonthPeriodRangeLabel,
   formatDateToIndo,
+  sanitizeAuthInput,
+  evaluateLoginRateLimit,
+  computeNextLockoutState,
+  createSignedSessionEnvelope,
+  verifySignedSessionEnvelope,
   type PiutangRecord,
   type GASUserAccount,
 } from './arLogic.ts';
@@ -372,5 +377,62 @@ test('AccountingPeriodConfig and dynamic computeSixMonthTrendData support arbitr
   assert.equal(trendFeb[5].monthLabel, 'Feb 2027');
   assert.equal(getSixMonthPeriodRangeLabel(trendFeb), 'SEP 2026 – FEB 2027');
 });
+
+test('Security hardening: sanitizeAuthInput, brute-force lockout, and signed session integrity', () => {
+  const clean = sanitizeAuthInput('zhiels');
+  assert.equal(clean.isSuspicious, false);
+  assert.equal(clean.sanitized, 'zhiels');
+
+  const sqli = sanitizeAuthInput("admin' OR 1=1 --");
+  assert.equal(sqli.isSuspicious, true);
+  assert.ok(sqli.reason?.includes('injeksi berbahaya'));
+
+  const xss = sanitizeAuthInput('<script>alert(1)</script>');
+  assert.equal(xss.isSuspicious, true);
+
+  const now = 1700000000000;
+  const step1 = computeNextLockoutState(0, now, 5, 60000);
+  assert.equal(step1.failedAttempts, 1);
+  assert.equal(step1.isLocked, false);
+
+  const step5 = computeNextLockoutState(4, now, 5, 60000);
+  assert.equal(step5.failedAttempts, 5);
+  assert.equal(step5.isLocked, true);
+  assert.equal(step5.lockUntilMs, now + 60000);
+
+  const rateLocked = evaluateLoginRateLimit(step5.failedAttempts, step5.lockUntilMs, now + 15000, 5);
+  assert.equal(rateLocked.isLocked, true);
+  assert.equal(rateLocked.remainingSeconds, 45);
+  assert.equal(rateLocked.remainingAttempts, 0);
+
+  const rateUnlocked = evaluateLoginRateLimit(step5.failedAttempts, step5.lockUntilMs, now + 61000, 5);
+  assert.equal(rateUnlocked.isLocked, false);
+  assert.equal(rateUnlocked.remainingAttempts, 5);
+
+  const user: GASUserAccount = {
+    username: 'zhiels',
+    fullName: 'zhiels',
+    role: 'AR Lead / Finance',
+    initials: 'RP',
+    branch: 'Jakarta HQ',
+    avatarUrl: '',
+    active: true,
+  };
+  const envelope = createSignedSessionEnvelope(user, now, 3600000);
+  const rawValid = JSON.stringify(envelope);
+
+  const verified = verifySignedSessionEnvelope(rawValid, now + 1000);
+  assert.equal(verified?.username, 'zhiels');
+
+  const expired = verifySignedSessionEnvelope(rawValid, now + 4000000);
+  assert.equal(expired, null);
+
+  const tampered = JSON.stringify({
+    ...envelope,
+    user: { ...envelope.user, role: 'Super Hacker' },
+  });
+  assert.equal(verifySignedSessionEnvelope(tampered, now + 1000), null);
+});
+
 
 

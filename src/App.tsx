@@ -17,6 +17,8 @@ import {
   type GASConfig,
   type AccountingPeriodConfig,
   getDefaultAccountingPeriod,
+  createSignedSessionEnvelope,
+  verifySignedSessionEnvelope,
 } from './utils/arLogic';
 import {
   isLiveGASUrl,
@@ -73,7 +75,7 @@ export default function App() {
         return INITIAL_GAS_USERS[0];
       }
       const savedSession = sessionStorage.getItem('ar_active_user');
-      return savedSession ? JSON.parse(savedSession) : null;
+      return verifySignedSessionEnvelope(savedSession);
     } catch {
       return null;
     }
@@ -320,7 +322,8 @@ export default function App() {
   const handleLoginSuccess = (user: GASUserAccount) => {
     setCurrentUser(user);
     try {
-      sessionStorage.setItem('ar_active_user', JSON.stringify(user));
+      const signedEnvelope = createSignedSessionEnvelope(user);
+      sessionStorage.setItem('ar_active_user', JSON.stringify(signedEnvelope));
     } catch {
       // ignore
     }
